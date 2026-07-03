@@ -1,0 +1,200 @@
+Without Kafka (Synchronous REST calls between independent microservices)
+
+The Order Service directly calls every other service.
+
+                  Customer
+                      |
+               POST /orders
+                      |
+                Order Service
+       ┌─────────┼──────────┬───────────┐
+       │         │          │           │
+ Payment API Inventory API Email API Shipping API
+       │         │          │           │
+
+Spring boot Example :::
+
+@RestController
+@RequestMapping("/orders")
+public class OrderController {
+
+    @Autowired
+    private PaymentClient paymentClient;
+
+    @Autowired
+    private InventoryClient inventoryClient;
+
+    @Autowired
+    private EmailClient emailClient;
+
+    @PostMapping
+    public String placeOrder(OrderRequest request) {
+
+        paymentClient.pay(request);
+
+        inventoryClient.reserve(request);
+
+        emailClient.sendConfirmation(request);
+
+        return "Order placed";
+    }
+}
+
+Problem 1 — Slow Response
+
+Suppose:
+
+Service	Response Time
+Payment	2 sec
+Inventory	3 sec
+Email	2 sec
+Shipping	4 sec
+
+Total time:
+
+2 + 3 + 2 + 4 = 11 seconds
+
+Customer waits 11 seconds before seeing "Order Placed".
+
+Imagine millions of users experiencing that delay.
+
+Problem 2 — One Failure Breaks Everything
+
+Suppose the Email Service is down.
+
+Order Service
+      |
+ Email Service ❌
+
+What should happen?
+
+The customer has already:
+
+Paid
+Inventory reserved
+
+Should the entire order fail because an email couldn't be sent?
+
+Of course not.
+
+Yet with tightly coupled synchronous calls, that's exactly what can happen if not designed carefully.
+
+Production Problem 3 — Tight Coupling
+
+Order Service knows about:
+
+Payment Service
+Inventory Service
+Email Service
+Shipping Service
+Analytics Service
+Fraud Service
+
+Every time a new service is introduced, Order Service must change.
+
+That's tight coupling.
+
+Production Problem 4 — Scaling
+
+Black Friday.
+
+Traffic increases 20x.
+
+Email Service becomes overloaded.
+
+Question:
+
+Should Payment Service also scale?
+
+No.
+
+But with poor architecture, one bottleneck can ripple through the system.
+
+Production Problem 5 — Retry Hell
+
+Inventory Service is temporarily unavailable.
+
+Order Service retries.
+
+Payment waits.
+
+Customer waits.
+
+Timeout occurs.
+
+Eventually:
+
+HTTP 500
+
+Customer clicks Place Order again.
+
+Now you may have:
+
+Two payments
+Two orders
+Duplicate inventory reservations
+
+This is a classic distributed systems problem.
+
+
+Spring Boot Perspective
+
+The producer becomes very simple.
+
+@Service
+public class OrderService {
+
+    @Autowired
+    private KafkaTemplate<String, String> kafkaTemplate;
+
+    public void placeOrder(String orderJson) {
+
+        // Save order to database (simplified)
+
+        kafkaTemplate.send("order-topic", orderJson);
+
+        System.out.println("Order event published");
+    }
+}
+
+Notice:
+
+No call to:
+
+Payment Service
+Inventory Service
+Email Service
+Shipping Service
+
+The Order Service's responsibility is only to create the order and publish the event.
+
+What Happens Next?
+
+Payment Service listens independently.
+
+@KafkaListener(topics = "order-topic")
+public void processPayment(String message) {
+
+    System.out.println("Processing payment...");
+
+}
+
+Inventory Service also listens.
+
+@KafkaListener(topics = "order-topic")
+public void reserveInventory(String message) {
+
+    System.out.println("Reserving inventory...");
+
+}
+
+Notification Service listens too.
+
+@KafkaListener(topics = "order-topic")
+public void sendEmail(String message) {
+
+    System.out.println("Sending confirmation email...");
+
+}
+
+Each service works independently.
