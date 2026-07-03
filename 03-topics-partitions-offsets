@@ -1,0 +1,722 @@
+
+# Module 3 — Topics, Partitions & Offsets
+
+## First, let's revise
+
+We learned:
+
+```text
+Producer
+
+↓
+
+Kafka Broker
+
+↓
+
+Topic
+
+↓
+
+Consumer
+```
+
+Now the question is:
+
+> **Where exactly inside the Topic are the messages stored?**
+
+The answer is:
+
+> **Inside Partitions.**
+
+---
+
+# 1. What is a Partition?
+
+A **Topic** is **not** one large file.
+
+Instead, Kafka splits every topic into one or more **Partitions**.
+
+Think of a Topic as a **folder**, and Partitions as **files inside that folder**.
+
+Example:
+
+```text
+orders Topic
+
+├── Partition 0
+├── Partition 1
+└── Partition 2
+```
+
+The producer sends messages to the topic, and Kafka stores each message in one of these partitions.
+
+---
+
+# Real-World Analogy
+
+Imagine a large warehouse.
+
+The warehouse stores packages.
+
+Instead of putting all packages into one room, it has multiple storage sections.
+
+```text
+Warehouse
+
+Room 1
+
+Room 2
+
+Room 3
+```
+
+Packages are distributed across these rooms.
+
+Kafka works the same way.
+
+```text
+Topic
+
+Partition 0
+
+Partition 1
+
+Partition 2
+```
+
+---
+
+# Production Example
+
+Amazon receives **100 million orders per day**.
+
+Would storing all orders in one file be efficient?
+
+No.
+
+Instead:
+
+```text
+orders Topic
+
+Partition 0
+
+Partition 1
+
+Partition 2
+
+Partition 3
+
+Partition 4
+```
+
+Each partition stores part of the data.
+
+---
+
+# Why Do We Need Partitions?
+
+**************************    ## Reason 1 — Parallel Processing     ************************
+
+Imagine only one partition.
+
+```text
+orders
+
+Partition 0
+
+Order 1
+
+Order 2
+
+Order 3
+
+Order 4
+
+Order 5
+```
+
+Only one consumer can process that partition at a time.
+
+Now imagine three partitions.
+
+```text
+orders
+
+Partition 0
+
+Partition 1
+
+Partition 2
+```
+
+Three consumers can process messages **simultaneously**.
+
+This dramatically increases throughput.
+
+---
+
+## Production Story
+
+Suppose Flipkart receives:
+
+```text
+1,000,000 orders/minute
+```
+
+One consumer cannot keep up.
+
+Instead:
+
+```text
+Partition 0 → Consumer A
+
+Partition 1 → Consumer B
+
+Partition 2 → Consumer C
+
+Partition 3 → Consumer D
+```
+
+All consumers work in parallel.
+
+---
+
+# Visual
+
+```text
+                Orders Topic
+
+----------------------------------------
+
+Partition 0
+
+Order 1
+
+Order 5
+
+Order 9
+
+----------------------------------------
+
+Partition 1
+
+Order 2
+
+Order 6
+
+Order 10
+
+----------------------------------------
+
+Partition 2
+
+Order 3
+
+Order 7
+
+Order 11
+
+----------------------------------------
+
+Partition 3
+
+Order 4
+
+Order 8
+
+Order 12
+```
+
+Notice:
+
+Each partition has its own sequence of messages.
+
+---
+
+# Important Rule
+
+### Kafka guarantees ordering **within a partition**, not across the entire topic. ####
+
+Example
+
+Partition 0
+
+```text
+Order1
+
+Order2
+
+Order3
+```
+
+Order is preserved.
+
+Partition 1
+
+```text
+Order10
+
+Order11
+
+Order12
+```
+
+Order is preserved.
+
+But Kafka does **not** guarantee that all messages across different partitions are globally ordered.
+
+This is one of the most frequently asked interview questions.
+
+---
+
+# How Does Kafka Decide the Partition?
+
+Suppose a topic has:
+
+```text
+Partition 0
+
+Partition 1
+
+Partition 2
+```
+
+The producer sends:
+
+```java
+kafkaTemplate.send("orders", orderEvent);
+```
+
+Kafka chooses a partition.
+
+How?
+
+It depends on whether you provide a **key**.
+
+---
+
+## Without a Key
+
+```java
+kafkaTemplate.send("orders", orderEvent);
+```
+
+Kafka distributes messages across partitions (typically using a sticky partitioning strategy in modern clients).
+
+Example:
+
+```text
+Order1 → Partition 0
+
+Order2 → Partition 1
+
+Order3 → Partition 2
+
+Order4 → Partition 1
+
+Order5 → Partition 0
+```
+
+This balances the load.
+
+---
+
+## With a Key
+
+```java
+kafkaTemplate.send(
+    "orders",
+    "customer-101",
+    orderEvent
+);
+```
+
+Kafka hashes the key.
+
+```
+hash(key) % numberOfPartitions
+```
+
+If:
+
+```text
+customer-101
+```
+
+always maps to:
+
+```text
+Partition 2
+```
+
+then every event for that customer goes to Partition 2.
+
+Example:
+
+```text
+Customer101 Order1
+
+↓
+
+Partition2
+
+Customer101 Order2
+
+↓
+
+Partition2
+
+Customer101 Order3
+
+↓
+
+Partition2
+```
+
+Ordering is maintained for that customer.
+
+---
+
+# Banking Example
+
+Suppose a customer transfers money.
+
+```text
+Customer101
+
+Transfer1
+
+Transfer2
+
+Transfer3
+```
+
+Should these transactions remain in order?
+
+Absolutely.
+
+Use:
+
+```text
+customerId
+```
+
+as the message key.
+
+All events for the same customer go to the same partition, preserving order.
+
+---
+
+# Interview Question
+
+### Why use a Message Key?
+
+**Answer:**
+
+A message key determines the partition where a message is stored. Messages with the same key are routed to the same partition, ensuring their order is preserved.
+
+---
+
+# Now Let's Learn Offsets
+
+This is another crucial concept.
+
+Imagine Partition 0.
+
+```text
+Partition0
+
+Order1
+
+Order2
+
+Order3
+
+Order4
+```
+
+How does Kafka know:
+
+* Which message is first?
+* Which message has already been consumed?
+* Which message should be read next?
+
+It uses **Offsets**.
+
+---
+
+# What is an Offset?
+
+An **Offset** is simply the position of a message inside a partition.
+
+Example:
+
+```text
+Partition0
+
+Offset 0 → Order1
+
+Offset 1 → Order2
+
+Offset 2 → Order3
+
+Offset 3 → Order4
+```
+
+Think of it like page numbers in a book.
+
+---
+
+# Real-Life Analogy
+
+Imagine reading a book.
+
+```text
+Page 1
+
+Page 2
+
+Page 3
+
+Page 4
+```
+
+If you stop at Page 40, you don't start from Page 1 next time.
+
+You continue from Page 41.
+
+Offsets work exactly like bookmarks.
+
+---
+
+# Consumer Example
+
+Suppose:
+
+```text
+Offset 0
+
+Offset 1
+
+Offset 2
+
+Offset 3
+```
+
+Consumer has processed:
+
+```text
+Offset0
+
+Offset1
+```
+
+The next message to read is:
+
+```text
+Offset2
+```
+
+Kafka remembers this position by storing the consumer's committed offset.
+
+---
+
+# Crash Scenario
+
+Suppose the consumer processes:
+
+```text
+Offset0
+
+Offset1
+
+Offset2
+```
+
+Then crashes.
+
+When it restarts:
+
+Does it begin at Offset 0?
+
+No.
+
+It resumes from the last committed offset, avoiding reprocessing of already acknowledged messages (depending on the commit strategy).
+
+---
+
+# Banking Example
+
+Imagine processing money transfers.
+
+```text
+Transfer1
+
+Transfer2
+
+Transfer3
+
+Transfer4
+```
+
+If the server crashes after processing `Transfer2`, you don't want to execute `Transfer1` and `Transfer2` again.
+
+Offsets allow the consumer to continue from the correct point.
+
+---
+
+# Putting It All Together
+
+```text
+Producer
+
+↓
+
+Orders Topic
+
+↓
+
+Partition0
+
+Offset0 Order1
+
+Offset1 Order2
+
+Offset2 Order3
+
+↓
+
+Consumer
+
+↓
+
+Processes Offset0
+
+Processes Offset1
+
+Commits Offset2
+
+↓
+
+Crash
+
+↓
+
+Restart
+
+↓
+
+Continues from Offset2
+```
+
+---
+
+# Common Interview Questions
+
+### 1. Why do we need partitions?
+
+To enable parallel processing, improve throughput, and allow topics to scale across multiple brokers.
+
+---
+
+### 2. Does Kafka guarantee ordering?
+
+Yes, **within a partition**. It does **not** guarantee a single global order across all partitions.
+
+---
+
+### 3. What is an offset?
+
+An offset is the unique sequential position of a message within a partition.
+
+---
+
+### 4. Can two partitions have Offset 0?
+
+Yes.
+
+Offsets are **partition-specific**, not topic-wide.
+
+Example:
+
+```text
+Partition0
+
+Offset0
+
+Offset1
+
+Offset2
+
+Partition1
+
+Offset0
+
+Offset1
+
+Offset2
+```
+
+This is perfectly normal.
+
+---
+
+### 5. Why should related events use the same key?
+
+To ensure they are routed to the same partition, preserving the order of those events.
+
+---
+
+# Production Example
+
+Suppose you work at a bank.
+
+Topic:
+
+```text
+money-transfer
+```
+
+Key:
+
+```text
+accountId
+```
+
+Messages:
+
+```text
+Account100
+
+Transfer ₹500
+
+Transfer ₹700
+
+Transfer ₹200
+```
+
+Because all messages use the same `accountId` as the key:
+
+```text
+Partition 3
+
+Offset0
+
+₹500
+
+Offset1
+
+₹700
+
+Offset2
+
+₹200
+```
+
+The consumer processes them in the correct order, preventing inconsistent account balances.
+
+---
+
+ 
