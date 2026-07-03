@@ -1,0 +1,667 @@
+Lets understand Kafka deeply by knowing the answers to the following questions.
+
+kafkaTemplate.send(...)
+
+What actually happens after send()?
+Where is the message stored?
+How does the consumer know which message to read?
+What happens if Kafka crashes?
+
+__Kafka Architecture (Beginner to Production)__
+
+## What is Apache Kafka?
+
+Apache Kafka is a **Distributed Event Streaming Platform**.
+
+Imagine WhatsApp.
+
+When you send a message:
+
+```
+You
+   |
+   |
+WhatsApp Server
+   |
+Friend
+```
+
+The server receives your message.
+
+Stores it.
+
+Then delivers it.
+
+Kafka works similarly.
+
+Instead of chat messages, Kafka stores **business events**.
+
+Example:
+
+```
+Order Created
+
+Payment Successful
+
+Money Transferred
+
+Account Opened
+
+Customer Registered
+```
+
+Kafka becomes the central hub for these events.
+
+---
+
+# Kafka Architecture
+
+A simplified architecture looks like this:
+
+```text
+                Producer
+
+                    |
+
+                Kafka Broker
+
+                    |
+
+      ------------------------------
+
+      |            |              |
+
+ Consumer A   Consumer B   Consumer C
+```
+
+Four important components:
+
+* Producer
+* Broker
+* Topic
+* Consumer
+
+We'll learn each one thoroughly.
+
+---
+
+# 1. Producer
+
+The producer **sends** messages to Kafka.
+
+Think of it as the sender.
+
+Example:
+
+```
+Order Service
+
+↓
+
+Order Created
+```
+
+Order Service is the producer.
+
+---
+
+### Spring Boot Example (Concept)
+
+```java
+OrderEvent event = new OrderEvent(...);
+
+kafkaTemplate.send("orders", event);
+```
+
+The producer doesn't know:
+
+* Who reads the message
+* When it is read
+* How many consumers exist
+
+Its only job is:
+
+> Publish the event.
+
+---
+
+## Production Example
+
+Amazon Order Service
+
+```
+Customer clicks
+
+Place Order
+
+↓
+
+Order Service
+
+↓
+
+Kafka
+```
+
+That's all.
+
+Order Service does not call:
+
+* Payment
+* Shipping
+* Notification
+* Analytics
+
+# 2. Broker
+
+This is one of the most important interview questions.
+
+## What is a Broker?
+
+A Broker is simply a **Kafka Server**.
+
+It stores messages.
+
+Example:
+
+```
+Producer
+
+↓
+
+Broker
+
+↓
+
+Consumer
+```
+
+The Broker is responsible for:
+
+* Receiving messages
+* Storing messages
+* Sending messages to consumers
+* Replication
+* Maintaining offsets
+* Managing partitions
+
+---
+
+Think of it as a warehouse.
+
+Amazon analogy:
+
+```
+Customer Order
+
+↓
+
+Amazon Warehouse
+
+↓
+
+Delivery Partner
+```
+
+The warehouse stores packages.
+
+Broker stores messages.
+
+---
+
+# Kafka Cluster
+
+In production there isn't one broker.
+
+There are many.
+
+```
+Kafka Cluster
+
+-------------------------
+
+Broker 1
+
+Broker 2
+
+Broker 3
+
+Broker 4
+
+Broker 5
+```
+
+This gives:
+
+* High Availability
+* Fault Tolerance
+* Scalability
+
+---
+
+Suppose Broker 2 crashes.
+
+```
+Broker 2
+
+DOWN
+```
+
+The other brokers continue working.
+
+No downtime.
+
+That's why banks and fintech companies love Kafka.
+
+---
+
+# 3. Topic
+
+This is another extremely common interview question.
+
+## What is a Topic?
+
+A Topic is like a folder.
+
+It stores related events.
+
+Example
+
+```
+orders
+
+payments
+
+notifications
+
+transactions
+
+customers
+```
+
+Each topic contains one type of event.
+
+---
+
+### Banking Example
+
+```
+Topic
+
+money-transfer
+```
+
+Events
+
+```
+Transfer 1
+
+Transfer 2
+
+Transfer 3
+
+Transfer 4
+```
+
+---
+
+Customer Topic
+
+```
+Customer Registered
+
+Customer Updated
+
+Customer Deleted
+```
+
+---
+
+Think of a topic as an email inbox.
+
+```
+Inbox
+
+↓
+
+Emails
+```
+
+Kafka
+
+```
+Topic
+
+↓
+
+Messages
+```
+
+---
+
+Spring Boot Example
+
+```java
+kafkaTemplate.send(
+    "orders",
+    orderEvent
+);
+```
+
+The producer sends the event into the **orders** topic.
+
+---
+
+# 4. Consumer
+
+The Consumer reads messages.
+
+Example
+
+```
+Producer
+
+↓
+
+Kafka
+
+↓
+
+Consumer
+```
+
+Payment Service is a consumer.
+
+Inventory Service is another consumer.
+
+Notification Service is another consumer.
+
+---
+
+Spring Boot Example
+
+```java
+@KafkaListener(topics = "orders")
+public void consume(OrderEvent event){
+
+    System.out.println(event);
+
+}
+```
+
+Whenever a new order arrives...
+
+Kafka pushes it to the consumer.
+
+---
+
+# Internal Flow
+
+Let's trace a single order.
+
+Customer clicks:
+
+```
+Place Order
+```
+
+Order Service
+
+↓
+
+Creates Order
+
+↓
+
+Producer
+
+↓
+
+Kafka Broker
+
+↓
+
+Orders Topic
+
+↓
+
+Consumer
+
+↓
+
+Inventory Service
+
+↓
+
+Payment Service
+
+↓
+
+Notification Service
+
+---
+
+Visual
+
+```
+Customer
+
+↓
+
+Order Service
+
+↓
+
+Producer
+
+↓
+
+Orders Topic
+
+↓
+
+Kafka Broker
+
+↓
+
+Consumer
+
+↓
+
+Inventory Service
+```
+
+---
+
+# Why Broker Instead of Direct REST?
+
+Without Kafka
+
+```
+Order
+
+↓
+
+Payment
+
+↓
+
+Inventory
+
+↓
+
+Notification
+```
+
+Every service must know every other service.
+
+With Kafka
+
+```
+Order
+
+↓
+
+Kafka
+
+↓
+
+Payment
+
+Inventory
+
+Notification
+
+Analytics
+```
+
+Order only knows Kafka.
+
+Nothing else.
+
+This reduces coupling.
+
+---
+
+# Production Example
+
+Imagine tomorrow the business wants:
+
+Fraud Detection.
+
+Without Kafka
+
+Modify Order Service.
+
+Add another REST call.
+
+Deploy again.
+
+With Kafka
+
+Simply create:
+
+```
+Fraud Service
+```
+
+Subscribe to:
+
+```
+orders
+```
+
+Done.
+
+No changes to Order Service.
+
+---
+
+# Interview Question
+
+## Why is Kafka loosely coupled?
+
+Because producers never communicate directly with consumers.
+
+They only communicate with Kafka.
+
+Consumers independently subscribe to topics.
+
+---
+
+# Quick Revision
+
+| Component | Responsibility               |
+| --------- | ---------------------------- |
+| Producer  | Sends messages               |
+| Broker    | Stores messages              |
+| Topic     | Logical category of messages |
+| Consumer  | Reads messages               |
+
+---
+
+# What Happens Internally?
+
+When a producer sends:
+
+```java
+kafkaTemplate.send("orders", orderEvent);
+```
+
+Kafka performs these steps:
+
+```
+Step 1
+
+Receive message
+
+↓
+
+Step 2
+
+Store inside Broker
+
+↓
+
+Step 3
+
+Append to Topic
+
+↓
+
+Step 4
+
+Assign Offset
+
+↓
+
+Step 5
+
+Wait for Consumer
+
+↓
+
+Step 6
+
+Consumer reads message
+```
+
+Notice one important point:
+
+Kafka **does not delete a message immediately after it is consumed**.
+
+It keeps messages for a configurable **retention period** (for example, several days), allowing consumers to replay events if needed.
+
+---
+
+# Production Scenario
+
+Suppose Notification Service is down for 20 minutes.
+
+During that time:
+
+```
+Order 1
+
+Order 2
+
+Order 3
+
+Order 4
+```
+
+are published.
+
+Does Kafka lose them?
+
+No.
+
+The broker stores them.
+
+When Notification Service comes back online, it resumes consuming from where it left off (based on its committed offset).
+
+This durability is one of Kafka's biggest strengths.
+
+---
+
+ 
