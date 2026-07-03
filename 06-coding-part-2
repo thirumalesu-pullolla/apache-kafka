@@ -1,0 +1,700 @@
+Excellent! Now we're entering the part where many interviews begin asking detailed questions.
+
+So far we have:
+
+```
+Client
+   |
+POST /api/orders
+   |
+OrderController
+   |
+OrderService
+   |
+OrderProducer
+   |
+Kafka Broker
+```
+
+The producer is sending messages.
+
+But...
+
+> **Who is reading them?**
+
+That's where the **Consumer** comes in.
+
+---
+
+# Module 5 — Building the First Kafka Consumer (Production Style)
+
+## Production Story
+
+Imagine you're working at Amazon.
+
+Customer places an order.
+
+```
+Order Created
+```
+
+Should the Order Service also process payment?
+
+No.
+
+Instead:
+
+```
+Order Service
+
+↓
+
+Kafka
+
+↓
+
+Payment Service
+```
+
+The Payment Service **listens** for new orders.
+
+---
+
+# What is a Consumer?
+
+A Consumer is simply a Spring Boot application that **subscribes to a Kafka Topic** and processes messages.
+
+Producer
+
+```
+Publish
+```
+
+Consumer
+
+```
+Read
+```
+
+---
+
+# Architecture
+
+```
+               Producer
+
+                   |
+
+             orders Topic
+
+                   |
+
+        --------------------
+
+        |
+
+ Payment Service
+
+        |
+
+ Process Payment
+```
+
+Notice:
+
+The producer does not call Payment Service.
+
+Payment Service **pulls** messages from Kafka.
+
+This is a key characteristic of event-driven systems.
+
+---
+
+# Create Payment Service
+
+Create another Spring Boot project.
+
+```
+payment-service
+```
+
+Dependencies
+
+* Spring Web
+* Spring for Apache Kafka
+* Lombok
+* DevTools
+
+---
+
+# Project Structure
+
+```
+payment-service
+
+controller
+
+consumer
+
+service
+
+config
+
+dto
+```
+
+Notice:
+
+There is **no producer package** yet.
+
+This service only consumes.
+
+---
+
+# application.yml
+
+```yaml
+spring:
+
+  application:
+    name: payment-service
+
+  kafka:
+
+    bootstrap-servers: localhost:9092
+
+    consumer:
+
+      group-id: payment-group
+
+      auto-offset-reset: earliest
+
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+
+      properties:
+
+        spring.json.trusted.packages: "*"
+
+server:
+
+  port: 8082
+```
+
+---
+
+# Let's Understand Every Property
+
+Most tutorials tell you:
+
+"Copy this."
+
+Let's understand **why**.
+
+---
+
+## group-id
+
+```yaml
+group-id: payment-group
+```
+
+Interview Question
+
+> What is Consumer Group?
+
+Think of a consumer group as a **team of workers**.
+
+Example
+
+```
+Payment Team
+
+↓
+
+Employee A
+
+Employee B
+
+Employee C
+```
+
+All three workers share the workload.
+
+Kafka works exactly the same.
+
+We'll study Consumer Groups in depth later.
+
+For now:
+
+```
+Payment Group
+
+↓
+
+Payment Consumer
+```
+
+---
+
+## auto-offset-reset
+
+```
+earliest
+```
+
+Means:
+
+If Kafka doesn't know where this consumer should start...
+
+Begin from the **first message**.
+
+Example
+
+Topic
+
+```
+Order1
+
+Order2
+
+Order3
+```
+
+Consumer starts today.
+
+With:
+
+```
+earliest
+```
+
+Consumer reads
+
+```
+Order1
+
+Order2
+
+Order3
+```
+
+If we used:
+
+```
+latest
+```
+
+Consumer ignores old messages.
+
+Only future messages are consumed.
+
+---
+
+# Deserializers
+
+Producer did
+
+```
+Java Object
+
+↓
+
+JSON
+
+↓
+
+Bytes
+```
+
+Consumer performs the reverse.
+
+```
+Bytes
+
+↓
+
+JSON
+
+↓
+
+Java Object
+```
+
+That's called **Deserialization**.
+
+---
+
+# Trusted Packages
+
+```yaml
+spring.json.trusted.packages: "*"
+```
+
+Spring must know which Java classes are allowed to be deserialized.
+
+For development:
+
+```
+*
+```
+
+is acceptable.
+
+Production systems usually specify package names instead of using a wildcard for better security.
+
+---
+
+# Copy OrderEvent
+
+The producer sends
+
+```java
+OrderEvent
+```
+
+The consumer also needs this class.
+
+Create:
+
+```java
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class OrderEvent {
+
+    private Long orderId;
+
+    private Long customerId;
+
+    private String productName;
+
+    private Integer quantity;
+
+    private BigDecimal amount;
+
+}
+```
+
+Notice:
+
+The producer and consumer must agree on the event structure.
+
+---
+
+# Create Consumer
+
+```java
+package com.example.payment.consumer;
+
+import com.example.payment.dto.OrderEvent;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.stereotype.Service;
+
+@Slf4j
+@Service
+public class PaymentConsumer {
+
+    @KafkaListener(
+            topics = "orders",
+            groupId = "payment-group"
+    )
+    public void processPayment(OrderEvent event){
+
+        log.info("Received Order : {}", event);
+
+        log.info("Processing Payment...");
+
+        log.info("Payment Completed");
+
+    }
+
+}
+```
+
+---
+
+# Interview Question
+
+## What is @KafkaListener?
+
+`@KafkaListener` tells Spring Boot:
+
+> Subscribe this method to a Kafka topic.
+
+Whenever a new message arrives:
+
+Spring automatically calls this method.
+
+No polling code is required.
+
+---
+
+# Internal Working
+
+Suppose Kafka receives
+
+```
+Order1001
+```
+
+Spring Kafka does:
+
+```
+Read Bytes
+
+↓
+
+Deserialize JSON
+
+↓
+
+Create OrderEvent
+
+↓
+
+Invoke processPayment()
+```
+
+All automatically.
+
+---
+
+# What Happens When You Publish?
+
+Client
+
+```
+POST
+
+/api/orders
+```
+
+↓
+
+Order Service
+
+↓
+
+Producer
+
+↓
+
+Kafka Broker
+
+↓
+
+Orders Topic
+
+↓
+
+Payment Consumer
+
+↓
+
+processPayment()
+
+```
+
+Console
+
+```
+
+Received Order :
+
+OrderEvent(
+orderId=1001,
+customerId=500,
+productName=Laptop,
+quantity=1,
+amount=75000
+)
+
+Processing Payment...
+
+Payment Completed
+
+````
+
+---
+
+# Production Flow
+
+Let's improve the logs.
+
+```java
+@Slf4j
+@Service
+public class PaymentConsumer {
+
+    @KafkaListener(
+            topics = "orders",
+            groupId = "payment-group"
+    )
+    public void processPayment(OrderEvent order){
+
+        log.info(
+                "Payment Started for Order {}",
+                order.getOrderId()
+        );
+
+        log.info(
+                "Customer : {}",
+                order.getCustomerId()
+        );
+
+        log.info(
+                "Amount : {}",
+                order.getAmount()
+        );
+
+        log.info(
+                "Payment Successful"
+        );
+
+    }
+
+}
+````
+
+Now your logs resemble a real production service.
+
+---
+
+# What Happens If Payment Service Is Down?
+
+Suppose:
+
+```
+Payment Service
+
+↓
+
+OFFLINE
+```
+
+Meanwhile:
+
+```
+Order1
+
+Order2
+
+Order3
+```
+
+are published.
+
+Question:
+
+Are they lost?
+
+No.
+
+Kafka stores them.
+
+When Payment Service starts again:
+
+```
+Kafka
+
+↓
+
+Payment Consumer
+
+↓
+
+Order1
+
+Order2
+
+Order3
+```
+
+This durability is one of Kafka's biggest advantages over simple REST communication.
+
+---
+
+# Common Interview Questions
+
+## 1. Difference between Producer and Consumer?
+
+Producer sends messages.
+
+Consumer reads messages.
+
+---
+
+## 2. What does @KafkaListener do?
+
+It subscribes a Spring method to a Kafka topic and automatically invokes the method when new messages arrive.
+
+---
+
+## 3. Why do we need Deserializers?
+
+Kafka stores bytes.
+
+Consumers must convert those bytes back into Java objects.
+
+---
+
+## 4. Why is auto-offset-reset=earliest useful?
+
+It allows a new consumer (with no committed offsets) to read all existing messages from the beginning of the topic.
+
+---
+
+## Production Improvements
+
+The consumer we built works, but experienced interviewers expect more.
+
+A production consumer should include:
+
+* Manual acknowledgment (`AckMode.MANUAL`)
+* Robust exception handling
+* Retry mechanisms
+* Dead Letter Topics (DLT/DLQ)
+* Idempotency to avoid duplicate processing
+* Validation of incoming events
+* Structured logging with correlation IDs (e.g., `orderId` or `traceId`)
+* Metrics and monitoring (Micrometer/Prometheus)
+* Observability with distributed tracing
+
+We'll add these features step by step throughout the course so you understand **why** they're needed instead of simply copying configuration.
+
+---
+
+# Current Architecture
+
+```
+                   POST /orders
+
+                         |
+
+                 Order Service
+
+                         |
+
+                   Kafka Producer
+
+                         |
+
+                  orders Topic
+
+                         |
+
+      ----------------------------------
+
+      |
+
+ Payment Consumer
+
+      |
+
+ Process Payment
+
+
+ 
