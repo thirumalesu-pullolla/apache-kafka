@@ -1,0 +1,612 @@
+
+# Project Architecture
+
+We'll start with **one Producer** and **one Consumer**.
+
+```text
+                    Customer
+
+                       |
+
+              POST /api/orders
+
+                       |
+
+              Order Service (Producer)
+
+                       |
+
+               Kafka Topic (orders)
+
+                       |
+
+             Payment Service (Consumer)
+```
+
+Later we'll add:
+
+* Inventory Service
+* Notification Service
+* Shipping Service
+* Fraud Detection Service
+
+---
+
+# Why Start with Order Service?
+
+In every E-Commerce or Banking system:
+
+A user performs some action.
+
+Examples:
+
+```text
+Place Order
+
+Transfer Money
+
+Open Account
+
+Register Customer
+```
+
+These are **business events**.
+
+Kafka's primary job is to transport these events.
+
+---
+
+# Step 1 — Create the Spring Boot Project
+
+Project Name
+
+```text
+order-service
+```
+
+Dependencies
+
+* Spring Web
+* Spring for Apache Kafka
+* Lombok
+* Validation
+* Spring Boot DevTools
+
+Later we'll add:
+
+* Spring Data JPA
+* PostgreSQL
+* Docker
+* OpenFeign
+* Redis
+
+---
+
+# Project Structure
+
+```
+order-service
+
+src/main/java
+
+    controller
+
+    service
+
+    producer
+
+    dto
+
+    config
+
+    entity
+
+    repository
+
+    exception
+```
+
+Why this structure?
+
+Because this is how most enterprise Spring Boot projects are organized.
+
+---
+
+# Step 2 — application.yml
+
+```yaml
+spring:
+
+  application:
+    name: order-service
+
+  kafka:
+    bootstrap-servers: localhost:9092
+
+server:
+  port: 8081
+```
+
+---
+
+## Explanation
+
+### Application Name
+
+```yaml
+spring:
+  application:
+    name: order-service
+```
+
+Useful later when we use:
+
+* Spring Cloud
+* Service Discovery
+* Distributed Logging
+
+---
+
+### Bootstrap Server
+
+```yaml
+bootstrap-servers:
+    localhost:9092
+```
+
+This is Kafka's address.
+
+When Spring Boot starts:
+
+```text
+Order Service
+
+↓
+
+localhost:9092
+
+↓
+
+Kafka Broker
+
+↓
+
+Connected
+```
+
+---
+
+# Step 3 — Our First Business Event
+ 
+
+In production we send **Business Objects**.
+
+Let's create an Order Event.
+
+```java
+package com.example.orderservice.dto;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.math.BigDecimal;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class OrderEvent {
+
+    private Long orderId;
+
+    private Long customerId;
+
+    private String productName;
+
+    private Integer quantity;
+
+    private BigDecimal amount;
+}
+```
+
+---
+
+## Why DTO?
+
+Interview Question
+
+**Why don't we send Entity objects?**
+
+Answer
+
+Because Kafka messages are part of our communication contract.
+
+Sending JPA entities:
+
+* Couples services tightly
+* Exposes unnecessary fields
+* Causes serialization issues
+* Makes schema evolution harder
+
+Instead we send DTO/Event objects.
+
+---
+
+# Step 4 — Configure JSON Serialization
+
+Question:
+
+Kafka stores bytes.
+
+How can Kafka store a Java object?
+
+Example:
+
+```java
+OrderEvent
+```
+
+Kafka cannot understand Java objects directly.
+
+Spring Boot converts it into JSON.
+
+Example
+
+Java Object
+
+```java
+new OrderEvent(
+    101L,
+    10L,
+    "Laptop",
+    1,
+    new BigDecimal("75000")
+);
+```
+
+Automatically becomes
+
+```json
+{
+  "orderId":101,
+  "customerId":10,
+  "productName":"Laptop",
+  "quantity":1,
+  "amount":75000
+}
+```
+
+This is called **Serialization**.
+
+---
+
+# Configure Producer
+
+```yaml
+spring:
+
+  kafka:
+
+    bootstrap-servers: localhost:9092
+
+    producer:
+
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+```
+
+---
+
+## Explanation
+
+### Key Serializer
+
+```text
+String
+
+↓
+
+Bytes
+```
+
+Kafka stores keys as bytes.
+
+---
+
+### Value Serializer
+
+```text
+OrderEvent
+
+↓
+
+JSON
+
+↓
+
+Bytes
+```
+
+Spring uses Jackson internally.
+
+---
+
+# Internal Flow
+
+```
+OrderEvent
+
+↓
+
+JsonSerializer
+
+↓
+
+JSON
+
+↓
+
+Byte Array
+
+↓
+
+Kafka Broker
+```
+
+Every Kafka message is stored as bytes.
+
+---
+
+# Step 5 — Producer Configuration
+
+Create
+
+```
+producer
+
+OrderProducer.java
+```
+
+```java
+package com.example.orderservice.producer;
+
+import com.example.orderservice.dto.OrderEvent;
+import lombok.RequiredArgsConstructor;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.stereotype.Service;
+
+@Service
+@RequiredArgsConstructor
+public class OrderProducer {
+
+    private final KafkaTemplate<String, OrderEvent> kafkaTemplate;
+
+    public void publishOrder(OrderEvent event){
+
+        kafkaTemplate.send(
+                "orders",
+                event.getOrderId().toString(),
+                event
+        );
+
+        System.out.println(
+                "Order Published : " + event
+        );
+    }
+}
+```
+
+---
+
+# Why KafkaTemplate?
+
+Interview Question
+
+**What is KafkaTemplate?**
+
+Answer
+
+`KafkaTemplate` is Spring Kafka's high-level abstraction for sending messages to Kafka.
+
+Internally it:
+
+* Creates a Producer Record
+* Serializes the key
+* Serializes the value
+* Sends the record to Kafka
+* Waits for broker acknowledgment (depending on configuration)
+
+Think of it as the Kafka equivalent of Spring's `JdbcTemplate` or `RestTemplate`.
+
+---
+
+# Why Use `orderId` as the Key?
+
+Notice:
+
+```java
+event.getOrderId().toString()
+```
+
+Why not
+
+```java
+null
+```
+
+Because Kafka hashes the key to choose a partition.
+
+Same Order
+
+↓
+
+Same Partition
+
+↓
+
+Correct Ordering
+
+For a production system, choose a key that matches your ordering requirement. If all events for an order must remain in sequence, `orderId` is a good key. If all events for a customer must remain in sequence, use `customerId` instead.
+
+---
+
+# Step 6 — Service Layer
+
+```java
+package com.example.orderservice.service;
+
+import com.example.orderservice.dto.OrderEvent;
+import com.example.orderservice.producer.OrderProducer;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+@Service
+@RequiredArgsConstructor
+public class OrderService {
+
+    private final OrderProducer producer;
+
+    public void createOrder(OrderEvent event){
+
+        producer.publishOrder(event);
+
+    }
+
+}
+```
+
+---
+
+# Why Have a Service Layer?
+
+Could the controller call the producer directly?
+
+Yes.
+
+Should it?
+
+No.
+
+Controllers should handle HTTP requests.
+
+Business logic belongs in the service layer.
+
+This separation makes the code easier to test and maintain.
+
+---
+
+# Step 7 — REST Controller
+
+```java
+package com.example.orderservice.controller;
+
+import com.example.orderservice.dto.OrderEvent;
+import com.example.orderservice.service.OrderService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api/orders")
+@RequiredArgsConstructor
+public class OrderController {
+
+    private final OrderService service;
+
+    @PostMapping
+    public String createOrder(
+            @RequestBody OrderEvent event){
+
+        service.createOrder(event);
+
+        return "Order Published Successfully";
+
+    }
+
+}
+```
+
+---
+
+# Request
+
+```
+POST
+
+/api/orders
+```
+
+```json
+{
+  "orderId":1001,
+  "customerId":500,
+  "productName":"Laptop",
+  "quantity":1,
+  "amount":75000
+}
+```
+
+---
+
+# Internal Flow
+
+```
+Client
+
+↓
+
+OrderController
+
+↓
+
+OrderService
+
+↓
+
+OrderProducer
+
+↓
+
+KafkaTemplate
+
+↓
+
+JsonSerializer
+
+↓
+
+Kafka Broker
+
+↓
+
+Orders Topic
+```
+
+Notice how clean the layering is.
+
+---
+
+# But Where Is the Consumer?
+
+Right now:
+
+```
+Producer
+
+↓
+
+Kafka
+
+↓
+
+Orders Topic
+```
+
+Nothing reads the message yet.
+
+That's perfectly fine.
+
+In real systems, producers and consumers are often developed and deployed independently.
+
+---
+
